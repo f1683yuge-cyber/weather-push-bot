@@ -49,6 +49,7 @@ jobs:
           
           # 提交更改
           git commit -m "🤖 Update weather map - $(date)"
+          git branch -M main
 
           # 推送到 gh-pages 分支（强制覆盖）
           git push --force "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main:gh-pages
