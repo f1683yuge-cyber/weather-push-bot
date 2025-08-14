@@ -1,26 +1,72 @@
-name: Weather Push Bot
+name: Daily Weather Push
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # 每天早上8点运行
+    - cron: '0 22 * * *'   # UTC 时间 22:00 = 北京时间次日 6:00
+  workflow_dispatch:        # 允许手动触发
 
 jobs:
-  push_weather_map:
+  push:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.9'
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install requests pyecharts snapshot-selenium
+          # 安装浏览器驱动（用于生成 PNG）
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
 
-      - name: Run script
+      - name: Run main.py (generate HTML & PNG)
+        env:
+          QWEATHER_KEY: ${{ secrets.QWEATHER_KEY }}
         run: |
-          python main.py ${{ secrets.WECHAT_PUSH_TOKEN }} ${{ secrets.WEATHER_API_KEY }}
+          python main.py
+
+      - name: Deploy to GitHub Pages (optional)
+        run: |
+          mkdir -p docs
+          cp hot-weather.html docs/
+          cp hot-weather.png docs/
+          cd docs
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Update weather map"
+          git push --force "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main:gh-pages
+
+      - name: Get image URL
+        run: |
+          echo "IMAGE_URL=https://$GITHUB_REPOSITORY_OWNER.github.io/${{ github.event.repository.name }}/hot-weather.png" >> $GITHUB_ENV
+          echo "HTML_URL=https://$GITHUB_REPOSITORY_OWNER.github.io/${{ github.event.repository.name }}/hot-weather.html" >> $GITHUB_ENV
+
+      - name: Send WeChat Message
+        run: |
+          # 获取 access_token
+          TOKEN=$(curl -s "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${{ secrets.WECHAT_APPID }}&secret=${{ secrets.WECHAT_SECRET }}" | grep -o '"access_token":"[^"]*' | cut -d: -f2- | tr -d '"')
+          
+          # 发送客服消息（图文）
+          curl -X POST "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=$TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "touser": "${{ secrets.WECHAT_TEST_OPENID }}",
+            "msgtype": "news",
+            "news": {
+              "articles": [
+                {
+                  "title": "🔥 今日高温预警",
+                  "description": "点击查看全国高温分布图",
+                  "url": "${{ env.HTML_URL }}",
+                  "picurl": "${{ env.IMAGE_URL }}"
+                }
+              ]
+            }
+          }'
