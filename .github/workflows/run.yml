@@ -1,0 +1,89 @@
+name: Daily Weather Push
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # UTC 时间 22:00 = 北京时间次日 6:00
+  workflow_dispatch:        # 允许手动触发（方便测试）
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install requests pyecharts snapshot-selenium
+          # 安装 Chromium 浏览器（用于生成 PNG）
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+
+      - name: Run main.py (generate HTML & PNG)
+        env:
+          QWEATHER_KEY: ${{ secrets.QWEATHER_KEY }}
+        run: |
+          python main.py
+
+      - name: Deploy to GitHub Pages
+        run: |
+          # 创建 docs 目录并复制生成的文件
+          mkdir -p docs
+          cp hot-weather.html docs/
+          cp hot-weather.png docs/
+
+          # 进入 docs 目录，初始化 Git
+          cd docs
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 添加所有文件
+          git add .
+          
+          # 提交更改
+          git commit -m "🤖 Update weather map - $(date)"
+
+          # 推送到 gh-pages 分支（强制覆盖）
+          git push --force "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main:gh-pages
+
+      - name: Set image and page URLs
+        run: |
+          # 设置环境变量，用于微信消息
+          echo "IMAGE_URL=https://$GITHUB_REPOSITORY_OWNER.github.io/${{ github.event.repository.name }}/hot-weather.png" >> $GITHUB_ENV
+          echo "HTML_URL=https://$GITHUB_REPOSITORY_OWNER.github.io/${{ github.event.repository.name }}/hot-weather.html" >> $GITHUB_ENV
+
+      - name: Send WeChat Message
+        run: |
+          # 获取微信 access_token
+          TOKEN=$(curl -s "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${{ secrets.WECHAT_APPID }}&secret=${{ secrets.WEATHER_SECRET }}" | jq -r '.access_token')
+
+          # 检查是否获取成功
+          if [ "$TOKEN" = "null" ]; then
+            echo "❌ 获取 access_token 失败，请检查 WECHAT_APPID 和 WEATHER_SECRET 是否正确"
+            exit 1
+          fi
+
+          # 发送图文客服消息
+          curl -X POST "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=$TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "touser": "${{ secrets.WECHAT_TEST_OPENID }}",
+            "msgtype": "news",
+            "news": {
+              "articles": [
+                {
+                  "title": "🔥 今日高温预警地图",
+                  "description": "全国高温分布图已生成，点击查看详情",
+                  "url": "${{ env.HTML_URL }}",
+                  "picurl": "${{ env.IMAGE_URL }}"
+                }
+              ]
+            }
+          }'
