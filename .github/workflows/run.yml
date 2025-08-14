@@ -23,4 +23,4 @@ jobs:
 
       - name: Run script
         run: |
-          python main.py
+          python main.py ${{ secrets.WECHAT_PUSH_TOKEN }} ${{ secrets.WEATHER_API_KEY }}
